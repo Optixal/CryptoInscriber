@@ -3,9 +3,10 @@
 import argparse
 import ccxt
 import csv
+import json
 import os
 import sys
-from time import sleep
+import time
 from typing import Type, List
 
 
@@ -15,9 +16,17 @@ class Cleaner():
         self.tradeDataPrev = None
 
     def dedup(self, tdCurr: dict, tdPrev: dict) -> dict:
+        if tdCurr == tdPrev:
+            return {}
+        if tdPrev == None:
+            return tdCurr
         tdCurrIDs = [execution['id'] for execution in tdCurr]
         tdPrevLatestID = tdPrev[0]['id']
         if tdPrevLatestID not in tdCurrIDs:
+            print('[-] Possibly missing executions between {} and {}...'.format(
+                time.asctime(time.localtime(int(str(tdPrev[0]['timestamp'])[:-3]))),
+                time.asctime(time.localtime(int(str(tdCurr[-1]['timestamp'])[:-3])))
+            ))
             return tdCurr
         return tdCurr[:tdCurrIDs.index(tdPrev[0]['id'])]
 
@@ -35,12 +44,10 @@ class Cleaner():
         return converted
 
     def clean(self, tradeData: dict):
-        if self.tradeDataPrev:
-            deduped = self.dedup(tradeData, self.tradeDataPrev)
-        else:
-            deduped = tradeData
+        deduped = self.dedup(tradeData, self.tradeDataPrev)
         self.tradeDataPrev = tradeData
-        return self.convert(deduped)
+        converted = self.convert(deduped)
+        return converted
 
 
 def buildParser() -> argparse.ArgumentParser:
@@ -48,7 +55,7 @@ def buildParser() -> argparse.ArgumentParser:
     # Define Parser
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        description='QuantDataOPTX | Cryptocurrency historical trade data poller'
+        description='CryptoInscriber | Cryptocurrency historical trade data poller'
     )
 
     # Exchange
@@ -60,8 +67,14 @@ def buildParser() -> argparse.ArgumentParser:
     # Rate Limit Per Minute
     parser.add_argument('-r', '--rate', metavar='60', type=int, default=60, help='rate limit, max number or requests per minute')
 
+    # Iterations
+    parser.add_argument('-i', '--iterations', metavar='0', type=int, default=0, help='number of times to poll executions before quitting, 0 to run indefinitely')
+
     # Output Directory
     parser.add_argument('-o', '--output', metavar='out', default='out', help='output directory to store CSV files')
+
+    # Custom Params
+    parser.add_argument('-c', '--custom', metavar='\'{"limit": 20}\'', default='{}', type=json.loads, help='custom exchange-specific parameters to use while polling for executions')
 
     return parser
 
@@ -82,7 +95,7 @@ def getExchange(exchangeName: str) -> ccxt.Exchange:
     try:
         exchange = getattr(ccxt, exchangeName)()
     except AttributeError:
-        print('Error: "{}" exchange is not available. Refer to https://github.com/ccxt/ccxt#supported-cryptocurrency-exchange-markets for available markets.'.format(exchangeName))
+        print('[-] Error: "{}" exchange is not available. Refer to https://github.com/ccxt/ccxt#supported-cryptocurrency-exchange-markets for available markets.'.format(exchangeName))
         exit(1)
     exchange.load_markets()
     return exchange
@@ -91,11 +104,10 @@ def getExchange(exchangeName: str) -> ccxt.Exchange:
 def createOutputDir(directory: str) -> None:
     if os.path.isdir(directory):
         return
-
     try:
         os.mkdir(directory)
     except FileExistsError:
-        print('A non-directory item "{}" already exists. Please use another output name.'.format(directory))
+        print('[-] A non-directory item "{}" already exists. Please use another output name.'.format(directory))
         exit(1)
 
 
@@ -110,24 +122,41 @@ def writeCSV(data: List[List], filename: str) -> None:
 
 
 def main():
+
     try:
-        parser   = buildParser()
-        args     = parseArgs(parser)
-        exchange = getExchange(args.exchange)
-        market   = args.market.upper()
-        delay    = 60 / args.rate
-        cleaner  = Cleaner()
+        parser     = buildParser()
+        args       = parseArgs(parser)
+        exchange   = getExchange(args.exchange)
+        market     = args.market.upper()
+        delay      = 60 / args.rate
+        iterations = args.iterations
+        cleaner    = Cleaner()
+
         createOutputDir(args.output)
+        outputFile = os.path.join(args.output, '{}_{}_{}.csv'.format(
+            exchange.name,
+            market.replace('/', ''),
+            time.strftime('%Y-%m-%d_%H-%M-%S')
+        ))
 
-        while True:
-            print('Polling for trade data...')
-
-            tradeData = getTradeData(exchange, market)
+        while args.iterations == 0 or iterations > 0:
+            try:
+                tradeData = getTradeData(exchange, market, customParams=args.custom)
+            except ccxt.NetworkError:
+                print('[-] Facing network issues, retrying in {} seconds...'.format(delay))
+                time.sleep(delay)
+                continue
             cleanedData = cleaner.clean(tradeData)
-            writeCSV(cleanedData, os.path.join(args.output, 'out.csv'))
+            writeCSV(cleanedData, outputFile)
 
-            print('Recorded! Sleeping for {} seconds...'.format(delay))
-            sleep(delay)
+            print('[{}] Recorded {} trade executions. Sleeping for {} seconds...'.format(
+                time.asctime(),
+                len(cleanedData),
+                delay
+            ))
+            if args.iterations:
+                iterations -= 1
+            time.sleep(delay)
 
     except KeyboardInterrupt:
         pass
