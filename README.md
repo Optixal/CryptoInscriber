@@ -4,6 +4,8 @@ CryptoInscriber - a live cryptocurrency historical trade data poller. Download l
 
 Outputs to `out/` by default in CSV format. Title will be `{EXCHANGE}_{MARKET}_{ASCTIME}.csv` with columns `Transaction ID, Timestamp (milli), Price, Amount, Side`
 
+Tested on Debian Stretch, and Raspberry Pi 3 Stretch.
+
 ## Installation using Virtualenv
 
 ```sh
