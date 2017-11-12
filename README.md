@@ -11,7 +11,7 @@ sudo apt install python3 python3-pip
 pip3 install virtualenv
 python3 -m virtualenv -p python3 env
 source env/bin/activate
-pip install -r requirements
+pip install -r requirements.txt
 ./cryptoinscriber
 ```
 
@@ -27,5 +27,5 @@ Poll for trade data from Bitfinex on market BTC/USD, limit to 20 executions per 
 
 Poll for trade data from Quoinex on market BTC/JPY, iterate twice only, limit to 100 executions per poll
 
-`./cryptoinscriber -e bitfinex -m btc/usd -i 2 -c '{"limit_trades": 100}'`
+`./cryptoinscriber -e bitfinex -m btc/usd -i 2 -c '{"limit": 100}'`
 
