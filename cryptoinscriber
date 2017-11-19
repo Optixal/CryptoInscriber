@@ -9,31 +9,39 @@ import sys
 import time
 from typing import Type, List
 
+banner = r"""
+ ____ ____ _ _ ___  ___ ____   _ __ _ ____ ____ ____ _ ___  ____ ____
+ |___ |--<  Y  |--'  |  [__]   | | \| ==== |___ |--< | |==] |=== |--<
+"""
 
-class Cleaner():
 
-    def __init__(self):
-        self.tradeDataPrev = None
+def dedup(tdCurr: dict, tdPrev: dict) -> dict:
+    if tdCurr == tdPrev:
+        return {}
+    if tdPrev == None:
+        return tdCurr
+    tdCurrIDs = [execution['id'] for execution in tdCurr]
+    tdPrevLatestID = tdPrev[0]['id']
+    if tdPrevLatestID not in tdCurrIDs:
+        print('[-] Possibly missing executions between {} and {}...'.format(
+            time.asctime(time.localtime(int(str(tdPrev[0]['timestamp'])[:-3]))),
+            time.asctime(time.localtime(int(str(tdCurr[-1]['timestamp'])[:-3])))
+        ))
+        return tdCurr
+    return tdCurr[:tdCurrIDs.index(tdPrev[0]['id'])]
 
-    def dedup(self, tdCurr: dict, tdPrev: dict) -> dict:
-        if tdCurr == tdPrev:
-            return {}
-        if tdPrev == None:
-            return tdCurr
-        tdCurrIDs = [execution['id'] for execution in tdCurr]
-        tdPrevLatestID = tdPrev[0]['id']
-        if tdPrevLatestID not in tdCurrIDs:
-            print('[-] Possibly missing executions between {} and {}...'.format(
-                time.asctime(time.localtime(int(str(tdPrev[0]['timestamp'])[:-3]))),
-                time.asctime(time.localtime(int(str(tdCurr[-1]['timestamp'])[:-3])))
-            ))
-            return tdCurr
-        return tdCurr[:tdCurrIDs.index(tdPrev[0]['id'])]
 
-    def convert(self, tradeData: dict) -> List[List]:
-        converted = []
-        for execution in tradeData:
-            # ID, Timestamp, Price, Amount, Side
+def convert(tradeData: dict, lite: bool) -> List[List]:
+    converted = []
+    for execution in tradeData:
+        # ID, Timestamp, Price, Amount, Side
+        if lite:
+            converted.insert(0, [
+                execution['timestamp'],
+                round(float(execution['price'])),
+                execution['amount'],
+            ])
+        else:
             converted.insert(0, [
                 execution['id'],
                 execution['timestamp'],
@@ -41,13 +49,7 @@ class Cleaner():
                 execution['amount'],
                 execution['side']
             ])
-        return converted
-
-    def clean(self, tradeData: dict):
-        deduped = self.dedup(tradeData, self.tradeDataPrev)
-        self.tradeDataPrev = tradeData
-        converted = self.convert(deduped)
-        return converted
+    return converted
 
 
 def buildParser() -> argparse.ArgumentParser:
@@ -76,6 +78,9 @@ def buildParser() -> argparse.ArgumentParser:
     # Custom Params
     parser.add_argument('-c', '--custom', metavar='\'{"limit": 20}\'', default='{}', type=json.loads, help='custom exchange-specific parameters to use while polling for executions')
 
+    # Mininmal Output
+    parser.add_argument('-l', '--lite', action='store_true', help='minimizes output rows; removes ID (first column), rounds price to nearest whole number (assuming decimal precision is not important), removes side (5th column)')
+
     return parser
 
 
@@ -83,6 +88,7 @@ def parseArgs(parser: argparse.ArgumentParser) -> argparse.Namespace:
 
     # Validate Args Length
     if len(sys.argv) < 2:
+        print(banner)
         parser.print_help()
         exit(1)
 
@@ -130,7 +136,6 @@ def main():
         market     = args.market.upper()
         delay      = 60 / args.rate
         iterations = args.iterations
-        cleaner    = Cleaner()
 
         createOutputDir(args.output)
         outputFile = os.path.join(args.output, '{}_{}_{}.csv'.format(
@@ -139,21 +144,28 @@ def main():
             time.strftime('%Y-%m-%d_%H-%M-%S')
         ))
 
+        tradeDataPrev = None
+
         while args.iterations == 0 or iterations > 0:
+
             try:
                 tradeData = getTradeData(exchange, market, customParams=args.custom)
             except ccxt.NetworkError:
                 print('[-] Facing network issues, retrying in {} seconds...'.format(delay))
                 time.sleep(delay)
                 continue
-            cleanedData = cleaner.clean(tradeData)
-            writeCSV(cleanedData, outputFile)
+
+            tradeDataClean = dedup(tradeData, tradeDataPrev)
+            tradeDataClean = convert(tradeDataClean, args.lite)
+            writeCSV(tradeDataClean, outputFile)
+            tradeDataPrev  = tradeData
 
             print('[{}] Recorded {} trade executions. Sleeping for {} seconds...'.format(
                 time.asctime(),
-                len(cleanedData),
+                len(tradeDataClean),
                 delay
             ))
+
             if args.iterations:
                 iterations -= 1
             time.sleep(delay)
