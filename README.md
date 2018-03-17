@@ -31,3 +31,4 @@ Poll for trade data from Quoinex on market BTC/JPY, iterate twice only, limit to
 
 `./cryptoinscriber -e bitfinex -m btc/usd -i 2 -c '{"limit": 100}'`
 
+.
